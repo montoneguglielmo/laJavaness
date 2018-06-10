@@ -1,0 +1,175 @@
+import csv
+import numpy as np
+
+
+def is_number(s):
+    try:
+        float(s)
+        return True
+    except ValueError:
+        return False
+
+
+class stringToInt(object):
+
+    def __init__(self, datasetDict):
+
+        self.datasetDict = datasetDict
+
+
+    def toInt(self, varName, listValue):
+
+        isNumber = self.datasetDict[varName]['isNumber']
+        hasEmpty = self.datasetDict[varName]['hasEmptySymb']
+        
+        if isNumber:
+            listValue = self.toIntFromNumbers(varName, hasEmpty, listValue)
+
+        if not isNumber:
+            listValue = self.toIntFromLabels(varName, listValue)
+
+        return listValue
+
+    
+    def toIntFromNumbers(self, varName, hasEmpty, listValue):
+        
+        if hasEmpty:
+           emptySymb = self.datasetDict[varName]['emptySymb']
+
+        lstValueFloat = []
+        for vl in listValue:
+            if not vl:
+                lstValueFloat.append(emptySymb)
+            else:
+                lstValueFloat.append(float(vl))
+        return lstValueFloat
+
+    
+        
+    def toIntFromLabels(self, varName, listValue):
+        lstValueFloat = []
+        symb          = datasetDict[varName]['symbols']
+        for vl in listValue:
+            lstValueFloat.append(float(symb.index(vl)))
+        return lstValueFloat
+
+
+
+
+    
+    
+if __name__ == "__main__":
+
+    row_data = []
+    with open('test_ljn/train.csv','rb') as csvfile:
+        reader = csv.reader(csvfile, delimiter= ' ', quotechar='|')
+        for row in reader:
+            row_data.append(row)
+
+    variableName = row_data[0][0].split(';')
+    row_data     = row_data[1:]
+    n_entry      = len(row_data[0][0].split(';'))
+
+    datasetDict = {}
+    isNumber    = [is_number(rw) for rw in row_data[1][0].split(';')]
+
+    for cnt in range(n_entry):
+        variableDict = {'isNumber': isNumber[cnt]}
+        dataString = []
+        for ln in row_data:
+            dataString.append(ln[0].split(';')[cnt])
+
+        symbols = list(set(dataString))
+        variableDict['n_symbols'] = len(symbols)
+        variableDict['symbols']   = symbols
+
+        if symbols[0] == '':
+            variableDict['hasEmptySymb'] = True
+            if isNumber[cnt] :
+                variableDict['emptySymb'] = np.asarray(symbols[1:], dtype=float).mean()
+        else:
+            variableDict['hasEmptySymb'] = False
+
+            
+        datasetDict[variableName[cnt]] =  variableDict
+    
+
+    strToIntGenerator = stringToInt(datasetDict)  
+
+
+    train_set = []
+    for cnt in range(n_entry):
+            varName  = variableName[cnt]
+            data_col = [] 
+            for ln in row_data:
+                data_col.append(ln[0].split(';')[cnt])
+            data_col = strToIntGenerator.toInt(varName, data_col)
+            train_set.append(data_col)
+
+    row_data = []
+    with open('test_ljn/test.csv','rb') as csvfile:
+        reader = csv.reader(csvfile, delimiter= ' ', quotechar='|')
+        for row in reader:
+            row_data.append(row)
+            
+    row_data   = row_data[1:]
+    test_set   = []
+    for cnt in range(n_entry-1):
+            varName  = variableName[cnt]
+            data_col = [] 
+            for ln in row_data:
+                data_col.append(ln[0].split(';')[cnt])
+            data_col = strToIntGenerator.toInt(varName, data_col)
+            test_set.append(data_col)
+
+
+    # Normalizie all the entry between 0 and 1
+    train_set_norm = []
+    test_set_norm  = []
+    for tr, ts in zip(train_set[:-1], test_set):
+        tr = np.asarray(tr)
+        tr = (tr - tr.min())/(tr.max() - tr.min())
+        ts = (ts - tr.min())/(tr.max() - tr.min())
+        train_set_norm.append(tr)
+        test_set_norm.append(ts)
+
+    train_set_norm.append(np.asarray(train_set[-1]))
+
+        
+##PREPARING DATA FOR TRAINING THE MODEL
+
+    #Transform into a matrix where each row is one data
+    train_set_norm = np.hstack([tr.reshape(-1,1) for tr in train_set_norm])
+    
+    idx_one  = np.where(train_set_norm[:,-1]>.5)[0]
+    idx_zero = np.where(train_set_norm[:,-1]<.5)[0]
+    np.random.shuffle(idx_zero)
+
+    
+    trainGroup = []
+    n_groups   = 3
+    sz_group   = idx_zero.shape[0]/n_groups
+    for cnt in range(n_groups):
+        idx_zero_group = idx_zero[cnt*sz_group:(cnt+1)*sz_group]
+        trainGroup.append(np.vstack([train_set_norm[idx_one,:], train_set_norm[idx_zero_group,:]]))
+
+    #print trainGroup[0].shape, trainGroup[-1].shape
+    
+
+    trainValidGroup = []
+    valid_frac      = 0.1
+    for gr in trainGroup:
+        idx   = np.arange(gr.shape[0])
+        np.random.shuffle(idx)
+
+        n_valid = int(gr.shape[0] * valid_frac)
+        valid   = gr[idx[:n_valid]]
+        train   = gr[idx[n_valid:]]
+
+        trainValidGroup.append([valid,train])
+        
+    
+    np.save('dataTrain.npy', trainValidGroup)
+    
+    test_set_norm = np.hstack([tr.reshape(-1,1) for tr in test_set_norm])
+    np.save('dataTest.npy', test_set_norm)
